@@ -6,6 +6,8 @@ package cz.krystofcejchan
 import cz.krystofcejchan.entity.Network
 import cz.krystofcejchan.entity.Node
 import cz.krystofcejchan.entity.NodeState
+import cz.krystofcejchan.utils.Logger
+import cz.krystofcejchan.utils.logCt
 import kotlinx.coroutines.runBlocking
 import kotlin.system.exitProcess
 
@@ -55,14 +57,15 @@ fun main(): Unit = runBlocking {
             election = start an election
             msg = send a message to a node   
             do = perform node's algorithm
-        """.trimMargin()
+            log = turn on/off console logging
+        """
         )
         input = readln()
         handleInput(input)
     }
 
     network.stopAllNodes()
-    println("Simulace dokončena.")
+    logCt("Simulace dokončena.")
     exitProcess(0)
 }
 
@@ -99,6 +102,11 @@ suspend fun handleInput(input: String) {
                 return
             }
             node.performAlgorithms()
+        }
+
+        "log" -> {
+            Logger.flip()
+            println("Logging is set to ${Logger.loggingAllowed}")
         }
 
         "election" -> return //todo handle

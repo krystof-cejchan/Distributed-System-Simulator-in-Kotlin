@@ -1,5 +1,6 @@
 package cz.krystofcejchan.entity
-// Network.kt
+
+import cz.krystofcejchan.utils.logCt
 
 class Network {
     val nodes = mutableMapOf<String, Node>()
@@ -12,9 +13,9 @@ class Network {
     // Vytvoření propojení mezi uzly (pro tento jednoduchý příklad je vše propojeno)
     fun connect(nodeId1: String, nodeId2: String) {
         if (nodes.containsKey(nodeId1) && nodes.containsKey(nodeId2)) {
-            println("Propojeno $nodeId1 <-> $nodeId2")
+            logCt("Propojeno $nodeId1 <-> $nodeId2")
         } else {
-            println("Propojení selhalo: Jeden z uzlů neexistuje.")
+            logCt("Propojení selhalo: Jeden z uzlů neexistuje.")
         }
     }
 
@@ -24,7 +25,7 @@ class Network {
         if (receiver != null) {
             receiver.receiveMessage(message)
         } else {
-            println("Zpráva pro neexistující uzel: ${message.receiverId}")
+            logCt("Zpráva pro neexistující uzel: ${message.receiverId}")
         }
     }
 

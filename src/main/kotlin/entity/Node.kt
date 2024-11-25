@@ -1,5 +1,6 @@
 package cz.krystofcejchan.entity
 
+import cz.krystofcejchan.utils.logCt
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.util.*
@@ -23,13 +24,13 @@ class Node(
 
     // Raft stavové proměnné
     var state: NodeState = NodeState.FOLLOWER
-        get() = synchronized(this) { field }
     private var currentTerm: Int = 0
     private var votedFor: String? = null
     private var voteCount: Int = 0
 
     // Timeouty pro Raft
     private var electionTimeoutJob: Job? = null
+    private var electionProcessJob: Job? = null
     private val random = Random(System.currentTimeMillis())
 
     // Stav tokenu pro vzájemné vyloučení
@@ -38,6 +39,9 @@ class Node(
 
     // Fronta žádostí o token
     private val requestQueue: LinkedList<String> = LinkedList()
+
+    // "zámek" pro zamezení spuštění algoritmu více než jednou
+    private var isPerformingAlgorithm: Boolean = false
 
     // Spuštění uzlu jako coroutine
     fun start() = coroutineScope.launch {
@@ -52,6 +56,7 @@ class Node(
     fun stop() {
         isActive = false
         electionTimeoutJob?.cancel()
+        electionProcessJob?.cancel()
         coroutineScope.cancel()
     }
 
@@ -92,17 +97,36 @@ class Node(
 
     // Zpracování timeoutu
     private fun onElectionTimeout() {
-        coroutineScope.launch {
-            state = NodeState.CANDIDATE
-            currentTerm += 1
-            votedFor = id
-            voteCount = 1 // Hlas pro sebe
-            println("Uzel $id se stává CANDIDATE v termínu $currentTerm")
-            // Poslat RequestVote zprávy ostatním uzlům
-            allNodeIds.filter { it != id }.forEach { nodeId ->
-                sendMessage(nodeId, "Requesting vote", MessageType.REQUEST_VOTE, currentTerm, id)
+        if (state != NodeState.LEADER) {
+            coroutineScope.launch {
+                state = NodeState.CANDIDATE
+                currentTerm += 1
+                votedFor = id
+                voteCount = 1 // Hlas pro sebe
+                logCt("Uzel $id se stává CANDIDATE v termínu $currentTerm")
+                // Poslat RequestVote zprávy ostatním uzlům
+                allNodeIds.filter { it != id }.forEach { nodeId ->
+                    sendMessage(nodeId, "Requesting vote", MessageType.REQUEST_VOTE, currentTerm, id)
+                }
+                // Zahájíme volby a čekáme na odpovědi
+                startElectionProcess()
             }
-            resetElectionTimeout()
+        }
+    }
+
+    // Startování volebního procesu
+    private fun startElectionProcess() {
+        electionProcessJob?.cancel()
+        electionProcessJob = coroutineScope.launch {
+            // Čekáme na určitou dobu, než volby selžou
+            delay(3000) // Timeout pro volby, např. 3 sekundy
+            if (state == NodeState.CANDIDATE) {
+                // Pokud jsme stále kandidátem, znamená to, že volební proces selhal
+                logCt("Uzel $id volby selhaly v termínu $currentTerm, opětovné zahájení voleb")
+                state = NodeState.FOLLOWER
+                votedFor = null
+                resetElectionTimeout() // Opětovné nastavení election timeoutu
+            }
         }
     }
 
@@ -124,7 +148,7 @@ class Node(
     private fun handleBasicMessage(message: Message) {
         when (message.type) {
             MessageType.REQUEST -> {
-                println("Uzel $id obdržel REQUEST od ${message.senderId}: ${message.content}")
+                logCt("Uzel $id obdržel REQUEST od ${message.senderId}: ${message.content}")
                 // Odpověď pouze na REQUEST typu
                 if (message.type != MessageType.RESPONSE) {
                     coroutineScope.launch {
@@ -138,7 +162,7 @@ class Node(
             }
 
             MessageType.RESPONSE -> {
-                println("Uzel $id obdržel RESPONSE od ${message.senderId}: ${message.content}")
+                logCt("Uzel $id obdržel RESPONSE od ${message.senderId}: ${message.content}")
             }
 
             else -> {
@@ -161,12 +185,12 @@ class Node(
             votedFor = null
         }
 
-        // Přidat další podmínky, např. kontrola logu (zjednodušeně)
+        // Přidat další podmínky, např. kontrola logCtu (zjednodušeně)
         if (votedFor == null || votedFor == message.candidateId) {
             votedFor = message.candidateId
             resetElectionTimeout()
             sendMessage(message.senderId, "Grant vote", MessageType.VOTE, currentTerm, id, voteGranted = true)
-            println("Uzel $id hlasuje pro ${message.candidateId} v termínu ${message.term}")
+            logCt("Uzel $id hlasuje pro ${message.candidateId} v termínu ${message.term}")
         } else {
             sendMessage(message.senderId, "Reject vote", MessageType.VOTE, currentTerm, id, voteGranted = false)
         }
@@ -180,7 +204,7 @@ class Node(
 
         if (message.voteGranted) {
             voteCount += 1
-            println("Uzel $id získal hlas od ${message.senderId}. Celkem hlasů: $voteCount")
+            logCt("Uzel $id získal hlas od ${message.senderId}. Celkem hlasů: $voteCount")
             if (voteCount > allNodeIds.size / 2) {
                 becomeLeader()
             }
@@ -189,18 +213,17 @@ class Node(
 
     // Zpracování AppendEntries zprávy (Heartbeat)
     private fun handleAppendEntries(message: Message) {
-        if (message.term < currentTerm) {
-            // Ignorovat starší termín
-            return
-        }
+        if (message.term < currentTerm) return
 
+
+        // Resetovat election timeout pouze při validním heartbeat
         resetElectionTimeout()
 
         if (message.term > currentTerm || state != NodeState.FOLLOWER) {
             currentTerm = message.term
             state = NodeState.FOLLOWER
             votedFor = null
-            println("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení AppendEntries od ${message.senderId}")
+            logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení AppendEntries od ${message.senderId}")
         }
 
         // V reálném Raft by zde byla odpověď, že AppendEntries byla přijata
@@ -209,9 +232,11 @@ class Node(
     // Přechod do stavu Leader
     private fun becomeLeader() {
         state = NodeState.LEADER
-        println("Uzel $id se stal LEADER v termínu $currentTerm")
+        logCt("Uzel $id se stal LEADER v termínu $currentTerm")
         // Zrušit election timeout, protože již není potřeba
         electionTimeoutJob?.cancel()
+        // Zrušit volbový proces, pokud je aktivní
+        electionProcessJob?.cancel()
         // Start sending heartbeats
         sendHeartbeats()
     }
@@ -230,7 +255,7 @@ class Node(
 
     // Zpracování REQUEST_TOKEN zprávy pro vzájemné vyloučení
     private fun handleRequestToken(message: Message) {
-        println("Uzel $id obdržel ${MessageType.REQUEST_TOKEN.name} od ${message.senderId}")
+        logCt("Uzel $id obdržel ${MessageType.REQUEST_TOKEN.name} od ${message.senderId}")
         if (hasToken && !requestingCS) {
             // Předat token
             hasToken = false
@@ -243,7 +268,7 @@ class Node(
 
     // Zpracování TOKEN zprávy pro vzájemné vyloučení
     private fun handleToken(message: Message) {
-        println("Uzel $id obdržel TOKEN od ${message.senderId}")
+        logCt("Uzel $id obdržel TOKEN od ${message.senderId}")
         hasToken = true
         enterCriticalSection()
     }
@@ -256,10 +281,10 @@ class Node(
     // Vstup do kritické sekce
     fun enterCriticalSection() = coroutineScope.launch {
         if (requestingCS && hasToken) {
-            println("Uzel $id vstupuje do kritické sekce.")
+            logCt("Uzel $id vstupuje do kritické sekce.")
             // Simulace práce v kritické sekci
             delay(2000)
-            println("Uzel $id opouští kritickou sekci.")
+            logCt("Uzel $id opouští kritickou sekci.")
             requestingCS = false
             // Předání tokenu dalšímu v frontě nebo náhodně
             if (requestQueue.isNotEmpty()) {
@@ -294,18 +319,19 @@ class Node(
     }
 
     // Metoda pro vlastní algoritmus, kterou může uzel periodicky vykonávat
-    fun performAlgorithms() = coroutineScope.launch {
-        while (isActive) {
-            requestCriticalSection()
-            task.run()
-            delay(timeMillis = 5000)
+    fun performAlgorithms() {
+        isPerformingAlgorithm = !isPerformingAlgorithm
+        coroutineScope.launch {
+            while (isActive && isPerformingAlgorithm) {
+                requestCriticalSection()
+                task.run()
+                delay(timeMillis = 5000)
+            }
+            this.cancel()
         }
     }
-
 
     override fun toString(): String {
         return "Node(id='$id', isActive=$isActive, state=$state)"
     }
-
-
 }
