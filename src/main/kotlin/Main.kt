@@ -11,10 +11,10 @@ import cz.krystofcejchan.utils.logCt
 import kotlinx.coroutines.runBlocking
 import kotlin.system.exitProcess
 
-val network = Network()
+private val network = Network()
 
 // Seznam všech uzlů
-val allNodeIds = listOf("A", "B", "C", "D", "E")
+val allNodeIds = mutableListOf("A", "B", "C", "D", "E")
 fun main(): Unit = runBlocking {
 
     // Vytvoření uzlů
@@ -25,7 +25,7 @@ fun main(): Unit = runBlocking {
     // Registrace uzlů do sítě
     nodes.forEach { node ->
         network.addNode(node)
-    }
+    }.also { network.buildFingerTables() }
 
     // Propojení uzlů
     allNodeIds.forEach { nodeId ->
@@ -58,6 +58,8 @@ fun main(): Unit = runBlocking {
             msg = send a message to a node   
             do = perform node's algorithm
             log = turn on/off console logging
+            add = add node
+            remove = remove node
         """
         )
         input = readln()
@@ -110,6 +112,22 @@ suspend fun handleInput(input: String) {
         }
 
         "election" -> return //todo handle
+
+        "add" -> {
+            println("enter the node id:")
+            val nodeId = readln()
+            allNodeIds.add(nodeId)
+            val newNode = Node(nodeId, network, allNodeIds)
+            network.addNode(newNode)
+        }
+
+        "remove" -> {
+            println("enter the node id:")
+            val nodeId = readln()
+            val newNode = Node(nodeId, network, allNodeIds)
+            allNodeIds.remove(nodeId)
+            network.removeNode(newNode)
+        }
 
         else -> return
     }

@@ -1,8 +1,11 @@
 package cz.krystofcejchan.entity
 
+import com.google.common.hash.Hashing
 import cz.krystofcejchan.utils.logCt
+import cz.krystofcejchan.utils.mmh3
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import java.nio.charset.Charset
 import java.util.*
 import kotlin.random.Random
 
@@ -16,7 +19,11 @@ class Node(
     val id: String,
     private val network: Network,
     private val allNodeIds: List<String>,
-    private val task: Runnable = Runnable { println(id) }
+    private val task: Runnable = Runnable { println(id) },
+    var previous: Node? = null,
+    var next: Node? = null,
+    val fingerTable: MutableSet<Node> = mutableSetOf(),
+    val hash: Int = id.mmh3()
 ) {
     private val messageChannel = Channel<Message>(Channel.UNLIMITED)
     private var isActive = true
