@@ -1,6 +1,6 @@
 package cz.krystofcejchan.utils
 
 import com.google.common.hash.Hashing
-import java.nio.charset.Charset
+import kotlin.math.absoluteValue
 
-fun String.mmh3() = Hashing.murmur3_32_fixed(0).hashString(this, Charset.defaultCharset()).asInt()
+fun String.mmh3(): Int = Hashing.murmur3_32_fixed(0).hashBytes(this.toByteArray()).asInt().absoluteValue

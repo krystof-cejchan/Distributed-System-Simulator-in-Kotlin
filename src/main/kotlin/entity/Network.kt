@@ -11,14 +11,13 @@ private val max = (2.0.pow(k.toDouble()) - 1).toInt()
 /**
  * hash ring
  */
-class Network {
+object Network {
     private var head: Node? = null
     val nodes = mutableMapOf<String, Node>()
 
-    private fun isInLegalRange(node: Node) = node.hash in min..max
-    private fun distance(node1: Node, node2: Node): Int {
-        val hash1 = node1.hash
-        val hash2 = node2.hash
+    private fun isInLegalRange(hashValue: Int) = hashValue in min..max
+
+    private fun distance(hash1: Int, hash2: Int): Int {
         return if (hash1 == hash2) {
             0
         } else if (hash1 < hash2) {
@@ -26,15 +25,15 @@ class Network {
         } else (2.0.pow(k) + (hash2 - hash1)).toInt()
     }
 
-    fun lookup(node: Node): Node? {
-        if (nodes.isEmpty() || !isInLegalRange(node)) return null
+    fun lookup(hashValue: Int): Node? {
+        if (nodes.isEmpty() || !isInLegalRange(hashValue)) return null
         var temp = head ?: return null
-        if (node.hash <= head!!.hash) {
+        if (hashValue <= head!!.hash) {
             return temp
         } else {
-            while (distance(temp, node) > distance(temp.next!!, node))
+            while (distance(temp.hash, hashValue) > distance(temp.next!!.hash, hashValue))
                 temp = temp.next!!
-            if (temp.hash == node.hash)
+            if (temp.hash == hashValue)
                 return temp
             return temp.next
         }
@@ -74,7 +73,7 @@ class Network {
         for (node in nodes.values) {
             for (i in 0 until k) {
                 val value = node.hash + 2.0.pow(i)
-                val temp = lookup(node) ?: nodes.values.first()
+                val temp = lookup(value.toInt()) ?: nodes.values.first()
                 node.fingerTable.add(temp)
             }
         }
@@ -88,13 +87,13 @@ class Network {
 
     // Registrace uzlu do sítě
     fun addNode(node: Node) {
-        if (!isInLegalRange(node)) return
+        if (!isInLegalRange(node.hash)) return
         if (head == null) {
             node.previous = node
             node.next = node
             head = node
         } else {
-            val temp = lookup(node)
+            val temp = lookup(node.hash)
             node.next = temp
             node.previous = temp!!.previous
             node.previous!!.next = node
@@ -107,9 +106,8 @@ class Network {
     }
 
     fun removeNode(node: Node) {
-        var temp = lookup(node)
+        val temp = lookup(node.hash)
         if (nodes.size == 1) {
-            temp = null
             head = null
             return
         }
@@ -120,9 +118,13 @@ class Network {
                 head = temp.next
             }
         }
+        nodes.getOrElse(node.id) { node }.let {
+            it.stop()
+            nodes.remove(it.id)
+        }
     }
 
-    // Vytvoření propojení mezi uzly (pro tento jednoduchý příklad je vše propojeno)
+    // Vytvoření propojení mezi uzly
     fun connect(nodeId1: String, nodeId2: String) {
         if (nodes.containsKey(nodeId1) && nodes.containsKey(nodeId2)) {
             logCt("Propojeno $nodeId1 <-> $nodeId2")
@@ -136,6 +138,8 @@ class Network {
         val receiver = nodes[message.receiverId]
         if (receiver != null) {
             receiver.receiveMessage(message)
+            if (message.type == MessageType.HEARTBEAT)
+                logCt(message)
         } else {
             logCt("Zpráva pro neexistující uzel: ${message.receiverId}")
         }

@@ -11,15 +11,16 @@ import cz.krystofcejchan.utils.logCt
 import kotlinx.coroutines.runBlocking
 import kotlin.system.exitProcess
 
-private val network = Network()
+private val network = Network
 
 // Seznam všech uzlů
-val allNodeIds = mutableListOf("A", "B", "C", "D", "E")
+val allNodeIds = mutableListOf("A", "B", "C")
+
 fun main(): Unit = runBlocking {
 
     // Vytvoření uzlů
     val nodes = allNodeIds.map { nodeId ->
-        Node(nodeId, network, allNodeIds)
+        Node(nodeId, network)
     }
 
     // Registrace uzlů do sítě
@@ -41,7 +42,7 @@ fun main(): Unit = runBlocking {
     }
 
     // Inicializace tokenu - například uzel A drží token na začátku
-    nodes.find { it.id == "A" }?.let { nodeA ->
+    nodes.firstOrNull()?.let { nodeA ->
         nodeA.hasToken = true
         nodeA.enterCriticalSection()
     }
@@ -54,7 +55,6 @@ fun main(): Unit = runBlocking {
             print = print info about the network and its nodes
             exit = exit the application
             stop = stop a node
-            election = start an election
             msg = send a message to a node   
             do = perform node's algorithm
             log = turn on/off console logging
@@ -111,21 +111,17 @@ suspend fun handleInput(input: String) {
             println("Logging is set to ${Logger.loggingAllowed}")
         }
 
-        "election" -> return //todo handle
-
         "add" -> {
             println("enter the node id:")
             val nodeId = readln()
-            allNodeIds.add(nodeId)
-            val newNode = Node(nodeId, network, allNodeIds)
+            val newNode = Node(nodeId, network)
             network.addNode(newNode)
         }
 
         "remove" -> {
             println("enter the node id:")
             val nodeId = readln()
-            val newNode = Node(nodeId, network, allNodeIds)
-            allNodeIds.remove(nodeId)
+            val newNode = Node(nodeId, network)
             network.removeNode(newNode)
         }
 
