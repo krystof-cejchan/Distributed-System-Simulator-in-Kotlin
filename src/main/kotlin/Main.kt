@@ -3,10 +3,9 @@
  */
 package cz.krystofcejchan
 
+import cz.krystofcejchan.command_manager.CommandManager
 import cz.krystofcejchan.entity.Network
 import cz.krystofcejchan.entity.Node
-import cz.krystofcejchan.entity.NodeState
-import cz.krystofcejchan.utils.Logger
 import cz.krystofcejchan.utils.logCt
 import kotlinx.coroutines.runBlocking
 import kotlin.system.exitProcess
@@ -14,13 +13,13 @@ import kotlin.system.exitProcess
 private val network = Network
 
 // Seznam všech uzlů
-val allNodeIds = mutableListOf("A", "B", "C")
+private val allNodeIds = setOf("A", "B", "C", "D", "E", "F", "G")
 
 fun main(): Unit = runBlocking {
 
     // Vytvoření uzlů
     val nodes = allNodeIds.map { nodeId ->
-        Node(nodeId, network)
+        Node(nodeId)
     }
 
     // Registrace uzlů do sítě
@@ -48,83 +47,15 @@ fun main(): Unit = runBlocking {
     }
 
 
+    val cmdManager = CommandManager
     var input = ""
     while (!input.equals("exit", true)) {
-        println(
-            """
-            print = print info about the network and its nodes
-            exit = exit the application
-            stop = stop a node
-            msg = send a message to a node   
-            do = perform node's algorithm
-            log = turn on/off console logging
-            add = add node
-            remove = remove node
-        """
-        )
+        println(cmdManager.toString())
         input = readln()
-        handleInput(input)
+        cmdManager.findCommandByTrigger(input)?.commandExecute() ?: "COMMAND $input WAS NOT FOUND"
     }
 
     network.stopAllNodes()
     logCt("Simulace dokončena.")
     exitProcess(0)
-}
-
-suspend fun handleInput(input: String) {
-    when (input.lowercase()) {
-        "print" -> println(network.toString())
-        "stop" -> {
-            println("enter the node id:")
-            val nodeId = readln()
-            network.nodes.getOrDefault(nodeId, null)?.stop()
-        }
-
-        "msg" -> {
-            println("enter the node id:")
-            val nodeId = readln()
-            val node = network.nodes.getOrDefault(nodeId, null)
-            if (node == null) {
-                println("not found | aborting")
-                return
-            }
-            println("enter the message:")
-            val msg = readln()
-
-            (network.nodes.values.firstOrNull { it.state == NodeState.LEADER } ?: network.nodes.values.random())
-                .sendMessage(node.id, msg)
-        }
-
-        "do" -> {
-            println("enter the node id:")
-            val nodeId = readln()
-            val node = network.nodes.getOrDefault(nodeId, null)
-            if (node == null) {
-                println("not found | aborting")
-                return
-            }
-            node.performAlgorithms()
-        }
-
-        "log" -> {
-            Logger.flip()
-            println("Logging is set to ${Logger.loggingAllowed}")
-        }
-
-        "add" -> {
-            println("enter the node id:")
-            val nodeId = readln()
-            val newNode = Node(nodeId, network)
-            network.addNode(newNode)
-        }
-
-        "remove" -> {
-            println("enter the node id:")
-            val nodeId = readln()
-            val newNode = Node(nodeId, network)
-            network.removeNode(newNode)
-        }
-
-        else -> return
-    }
 }

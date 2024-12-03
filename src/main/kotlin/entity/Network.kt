@@ -1,6 +1,7 @@
 package cz.krystofcejchan.entity
 
 import cz.krystofcejchan.utils.logCt
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -9,20 +10,20 @@ private const val min = 0
 private val max = (2.0.pow(k.toDouble()) - 1).toInt()
 
 /**
- * hash ring
+ * network connecting Nodes as hash ring
+ * singleton
+ * @see Node
  */
 object Network {
     private var head: Node? = null
-    val nodes = mutableMapOf<String, Node>()
+    internal val nodes = ConcurrentHashMap<String, Node>()
 
     private fun isInLegalRange(hashValue: Int) = hashValue in min..max
 
     private fun distance(hash1: Int, hash2: Int): Int {
-        return if (hash1 == hash2) {
-            0
-        } else if (hash1 < hash2) {
-            hash2 - hash1
-        } else (2.0.pow(k) + (hash2 - hash1)).toInt()
+        return if (hash1 == hash2) 0
+        else if (hash1 < hash2) hash2 - hash1
+        else (2.0.pow(k) + (hash2 - hash1)).toInt()
     }
 
     fun lookup(hashValue: Int): Node? {
@@ -102,7 +103,7 @@ object Network {
             if (node.hash < head!!.hash)
                 head = node
         }
-        nodes.putIfAbsent(node.id, node)
+        nodes.putIfAbsent(node.id, node).also { node.start() }
     }
 
     fun removeNode(node: Node) {
@@ -119,8 +120,8 @@ object Network {
             }
         }
         nodes.getOrElse(node.id) { node }.let {
-            it.stop()
             nodes.remove(it.id)
+            it.stop()
         }
     }
 
@@ -135,14 +136,8 @@ object Network {
 
     // Odeslání zprávy prostřednictvím sítě
     suspend fun sendMessage(message: Message) {
-        val receiver = nodes[message.receiverId]
-        if (receiver != null) {
-            receiver.receiveMessage(message)
-            if (message.type == MessageType.HEARTBEAT)
-                logCt(message)
-        } else {
-            logCt("Zpráva pro neexistující uzel: ${message.receiverId}")
-        }
+        val receiver = chordLookup(Node(message.receiverId))
+        receiver?.receiveMessage(message) ?: logCt("Zpráva pro neexistující uzel: ${message.receiverId}")
     }
 
     fun stopAllNodes() = this.nodes.values.forEach { it.stop() }

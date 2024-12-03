@@ -20,7 +20,6 @@ private const val MAX_ELECTION_TIMEOUT = 5000L // v milisekundách
 
 class Node(
     val id: String,
-    private val network: Network,
     private val task: Runnable = Runnable { println(id) },
     var previous: Node? = null,
     var next: Node? = null,
@@ -58,7 +57,7 @@ class Node(
     // Spuštění uzlu jako coroutine
     fun start() = coroutineScope.launch {
         resetElectionTimeout()
-        while (isActive) {
+        while (this@Node.isActive) {
             val message = messageChannel.receive()
             handleMessage(message)
         }
@@ -91,7 +90,7 @@ class Node(
             candidateId = candidateId,
             voteGranted = voteGranted
         )
-        network.sendMessage(message)
+        Network.sendMessage(message)
     }
 
     // Přijetí zprávy
@@ -111,21 +110,19 @@ class Node(
 
     // Zpracování timeoutu
     private fun onElectionTimeout() {
-        if (state == NodeState.FOLLOWER) {
+        if (state == NodeState.FOLLOWER && this.isActive) {
             coroutineScope.launch {
-                if (state == NodeState.FOLLOWER) {
-                    state = NodeState.CANDIDATE
-                    currentTerm += 1
-                    votedFor = id
-                    voteCount = 1 // Hlas pro sebe
-                    logCt("Uzel $id se stává CANDIDATE v termínu $currentTerm")
-                    // Poslat RequestVote zprávy ostatním uzlům
-                    allNodeIds().filter { it != id }.forEach { nodeId ->
-                        sendMessage(nodeId, "Requesting vote", MessageType.REQUEST_VOTE, currentTerm, id)
-                    }
-                    // Zahájíme volby a čekáme na odpovědi
-                    startElectionProcess()
+                state = NodeState.CANDIDATE
+                currentTerm += 1
+                votedFor = id
+                voteCount = 1 // Hlas pro sebe
+                logCt("Uzel $id se stává CANDIDATE v termínu $currentTerm")
+                // Poslat RequestVote zprávy ostatním uzlům
+                allNodeIds(true).filter { it != id }.forEach { nodeId ->
+                    sendMessage(nodeId as String, "Requesting vote", MessageType.REQUEST_VOTE, currentTerm, id)
                 }
+                // Zahájíme volby a čekáme na odpovědi
+                startElectionProcess()
             }
         }
     }
@@ -218,7 +215,7 @@ class Node(
         if (message.voteGranted) {
             voteCount += 1
             logCt("Uzel $id získal hlas od ${message.senderId}. Celkem hlasů: $voteCount")
-            if (voteCount > allNodeIds().size / 2) {
+            if (voteCount > allNodeIds(true).size / 2) {
                 becomeLeader()
             }
         } else if (message.term > currentTerm) {
@@ -239,19 +236,19 @@ class Node(
 
         resetElectionTimeout()
 
-        if (message.term > currentTerm) {
+        if (message.term > currentTerm || state != NodeState.FOLLOWER) {
             currentTerm = message.term
             state = NodeState.FOLLOWER
             votedFor = null
             heartbeatJob?.cancel()
-            logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení AppendEntries od ${message.senderId}")
+            logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení HeartBeatu od ${message.senderId}")
         } else {
             // Pokud jsme kandidát a obdržíme heartbeat s naším termínem, přejdeme do stavu FOLLOWER
             if (state == NodeState.CANDIDATE) {
                 state = NodeState.FOLLOWER
                 votedFor = null
                 electionProcessJob?.cancel()
-                logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení AppendEntries od ${message.senderId}")
+                logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení Heartbeatu od ${message.senderId}")
             }
         }
     }
@@ -277,7 +274,7 @@ class Node(
         return coroutineScope.launch {
             while (state == NodeState.LEADER && this@Node.isActive) {
                 allNodeIds().filter { it != id }.forEach { nodeId ->
-                    sendMessage(nodeId, "Heartbeat", MessageType.HEARTBEAT, currentTerm, id)
+                    sendMessage(nodeId as String, "Heartbeat", MessageType.HEARTBEAT, currentTerm, id)
                 }
                 delay(HEARTBEAT_INTERVAL) // Heartbeat interval
             }
@@ -344,9 +341,10 @@ class Node(
 
     // Funkce pro získání ID následujícího uzlu v pořadí
     private fun getNextNodeId(): String {
-        val currentIndex = allNodeIds().indexOf(id)
-        val nextIndex = (currentIndex + 1) % allNodeIds().size
-        return allNodeIds()[nextIndex]
+        val allIds = allNodeIds(true) as List<String>
+        val currentIndex = allIds.indexOf(id)
+        val nextIndex = (currentIndex + 1) % allIds.size
+        return allIds[nextIndex]
     }
 
     // Metoda pro vlastní algoritmus, kterou může uzel periodicky vykonávat
@@ -362,10 +360,15 @@ class Node(
         }
     }
 
-    private fun allNodeIds() = Network.nodes.values.map { it.id }.toList()
+    private fun allNodeIds(filterActive: Boolean = false, idOnly: Boolean = true) =
+        Network.nodes.values.filter { filterActive.not().or(it.isActive) }.map {
+            if (idOnly)
+                it.id
+            else it
+        }.toList()
 
     override fun toString(): String {
-        return "Node(id='$id', isActive=$isActive, state=$state)"
+        return "Node(id='$id', isActive=$isActive, state=$state, term=$currentTerm)"
     }
 
     override fun equals(other: Any?): Boolean {
@@ -380,5 +383,4 @@ class Node(
     override fun hashCode(): Int {
         return id.hashCode()
     }
-
 }
