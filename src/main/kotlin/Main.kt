@@ -4,6 +4,7 @@
 package cz.krystofcejchan
 
 import cz.krystofcejchan.command_manager.CommandManager
+import cz.krystofcejchan.command_manager.commands.Exit
 import cz.krystofcejchan.entity.Network
 import cz.krystofcejchan.entity.Node
 import cz.krystofcejchan.utils.logCt
@@ -13,7 +14,7 @@ import kotlin.system.exitProcess
 private val network = Network
 
 // Seznam všech uzlů
-private val allNodeIds = setOf("A", "B", "C", "D", "E", "F", "G")
+private val allNodeIds = setOf("A", "B", "C")
 
 fun main(): Unit = runBlocking {
 
@@ -36,20 +37,21 @@ fun main(): Unit = runBlocking {
     }
 
     // Start uzlů
-    nodes.forEach { node ->
-        node.start()
+    nodes.forEach {
+        it.start()
     }
 
-    // Inicializace tokenu - například uzel A drží token na začátku
-    nodes.firstOrNull()?.let { nodeA ->
-        nodeA.hasToken = true
-        nodeA.enterCriticalSection()
+    // Inicializace tokenu
+    nodes.randomOrNull()?.let {
+        it.hasToken = true
+        it.enterCriticalSection()
     }
 
 
     val cmdManager = CommandManager
+    val exitCommandTrigger = Exit().commandTrigger()
     var input = ""
-    while (!input.equals("exit", true)) {
+    while (!exitCommandTrigger.equals(input, ignoreCase = true)) {
         println(cmdManager.toString())
         input = readln()
         cmdManager.findCommandByTrigger(input)?.commandExecute() ?: "COMMAND $input WAS NOT FOUND"

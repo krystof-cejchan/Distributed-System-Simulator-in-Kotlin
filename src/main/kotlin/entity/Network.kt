@@ -1,7 +1,7 @@
 package cz.krystofcejchan.entity
 
 import cz.krystofcejchan.utils.logCt
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -16,7 +16,11 @@ private val max = (2.0.pow(k.toDouble()) - 1).toInt()
  */
 object Network {
     private var head: Node? = null
-    internal val nodes = ConcurrentHashMap<String, Node>()
+    internal val nodes = HashMap<String, Node>()
+
+    // Fronta žádostí o token
+    internal val requestQueue: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
+
 
     private fun isInLegalRange(hashValue: Int) = hashValue in min..max
 
@@ -103,6 +107,7 @@ object Network {
             if (node.hash < head!!.hash)
                 head = node
         }
+        buildFingerTables()
         nodes.putIfAbsent(node.id, node).also { node.start() }
     }
 
@@ -123,6 +128,7 @@ object Network {
             nodes.remove(it.id)
             it.stop()
         }
+        buildFingerTables()
     }
 
     // Vytvoření propojení mezi uzly

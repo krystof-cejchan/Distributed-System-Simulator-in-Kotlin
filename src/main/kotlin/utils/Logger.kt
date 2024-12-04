@@ -4,7 +4,7 @@ package cz.krystofcejchan.utils
 class Logger {
     companion object {
         @JvmStatic
-        internal var loggingAllowed = true
+        internal var loggingAllowed = false
 
         @JvmStatic
         fun flip() {

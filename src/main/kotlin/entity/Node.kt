@@ -4,7 +4,6 @@ import cz.krystofcejchan.utils.logCt
 import cz.krystofcejchan.utils.mmh3
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import java.util.*
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -16,7 +15,7 @@ enum class NodeState {
 
 private val HEARTBEAT_INTERVAL = 250.milliseconds
 private const val MIN_ELECTION_TIMEOUT = 3000L // v milisekundách
-private const val MAX_ELECTION_TIMEOUT = 5000L // v milisekundách
+private const val MAX_ELECTION_TIMEOUT = 8000L // v milisekundách
 
 class Node(
     val id: String,
@@ -44,9 +43,8 @@ class Node(
     // Stav tokenu pro vzájemné vyloučení
     var hasToken: Boolean = false
     private var requestingCS: Boolean = false
+    private var tokenDeferred: CompletableDeferred<Unit>? = null
 
-    // Fronta žádostí o token
-    private val requestQueue: LinkedList<String> = LinkedList()
 
     // "zámek" pro zamezení spuštění algoritmu více než jednou
     private var isPerformingAlgorithm: Boolean = false
@@ -132,7 +130,7 @@ class Node(
         electionProcessJob?.cancel()
         electionProcessJob = coroutineScope.launch {
             // Čekáme na určitou dobu, než volby selžou
-            delay(MAX_ELECTION_TIMEOUT)
+            delay((MAX_ELECTION_TIMEOUT + MAX_ELECTION_TIMEOUT * .2).toLong())
             if (state == NodeState.CANDIDATE) {
                 // Pokud jsme stále kandidátem, znamená to, že volební proces selhal
                 logCt("Uzel $id volby selhaly v termínu $currentTerm, opětovné zahájení voleb")
@@ -284,25 +282,35 @@ class Node(
     // Zpracování REQUEST_TOKEN zprávy pro vzájemné vyloučení
     private fun handleRequestToken(message: Message) {
         logCt("Uzel $id obdržel ${MessageType.REQUEST_TOKEN.name} od ${message.senderId}")
-        if (hasToken && !requestingCS) {
+        if (hasToken && !isPerformingAlgorithm) {
             // Předat token
             hasToken = false
             sendToken(message.senderId)
         } else {
             // Přidat do fronty
-            requestQueue.add(message.senderId)
+            Network.requestQueue.add(message.senderId)
         }
     }
 
     // Zpracování TOKEN zprávy pro vzájemné vyloučení
     private fun handleToken(message: Message) {
-        logCt("Uzel $id obdržel TOKEN od ${message.senderId}")
+        logCt("Node $id received TOKEN from ${message.senderId}")
         hasToken = true
-        enterCriticalSection()
+        if (requestingCS) {
+            tokenDeferred?.complete(Unit)
+        } else {
+            if (Network.requestQueue.isNotEmpty()) {
+                sendToken(Network.requestQueue.poll())
+            } else {
+                sendToken(getNextNodeId())
+            }
+        }
     }
 
     // Odeslání tokenu
     private fun sendToken(receiverId: String) = coroutineScope.launch {
+        hasToken = false
+        isPerformingAlgorithm = false
         sendMessage(receiverId, "Token", MessageType.TOKEN)
     }
 
@@ -310,17 +318,23 @@ class Node(
     fun enterCriticalSection() = coroutineScope.launch {
         if (requestingCS && hasToken) {
             logCt("Uzel $id vstupuje do kritické sekce.")
-            // Simulace práce v kritické sekci
-            delay(2000)
+            while (isPerformingAlgorithm) {
+                yield()
+            }
             logCt("Uzel $id opouští kritickou sekci.")
             requestingCS = false
             // Předání tokenu dalšímu v frontě nebo náhodně
-            if (requestQueue.isNotEmpty()) {
-                val nextNode = requestQueue.poll()
+            if (Network.requestQueue.isNotEmpty()) {
+                val nextNode = Network.requestQueue.poll()
                 sendToken(nextNode)
             } else {
-                // Pokud nikdo nečeká, drží token
-                hasToken = true
+                sendToken(getNextNodeId())
+            }
+        } else if (hasToken && !isPerformingAlgorithm) {
+            if (Network.requestQueue.isNotEmpty()) {
+                sendToken(Network.requestQueue.poll())
+            } else {
+                sendToken(getNextNodeId())
             }
         }
     }
@@ -330,10 +344,8 @@ class Node(
         if (!requestingCS) {
             requestingCS = true
             if (hasToken) {
-                // Můžeme okamžitě vstoupit
-                enterCriticalSection()
+                tokenDeferred?.complete(Unit)
             } else {
-                // Požádat o token
                 sendMessage(getNextNodeId(), "Requesting token", MessageType.REQUEST_TOKEN)
             }
         }
@@ -349,14 +361,26 @@ class Node(
 
     // Metoda pro vlastní algoritmus, kterou může uzel periodicky vykonávat
     fun performAlgorithms() {
-        isPerformingAlgorithm = !isPerformingAlgorithm
+        isPerformingAlgorithm = true
         coroutineScope.launch {
-            while (isActive && isPerformingAlgorithm) {
-                requestCriticalSection()
-                task.run()
-                delay(timeMillis = 5000)
+            tokenDeferred = CompletableDeferred()
+            requestCriticalSection()
+            tokenDeferred?.await()
+            if (hasToken) {
+                for (n in 0 until 5) {
+                    if (!this@Node.isActive) break
+                    task.run()
+                    delay(timeMillis = 1000)
+                }
             }
-            this.cancel()
+            isPerformingAlgorithm = false
+            requestingCS = false
+            tokenDeferred = null
+            if (Network.requestQueue.isNotEmpty()) {
+                sendToken(Network.requestQueue.poll())
+            } else {
+                sendToken(getNextNodeId())
+            }
         }
     }
 
@@ -368,7 +392,7 @@ class Node(
         }.toList()
 
     override fun toString(): String {
-        return "Node(id='$id', isActive=$isActive, state=$state, term=$currentTerm)"
+        return "Node(id='$id', isActive=$isActive, state=$state, term=$currentTerm, hasToken=$hasToken)"
     }
 
     override fun equals(other: Any?): Boolean {
