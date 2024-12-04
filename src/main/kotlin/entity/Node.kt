@@ -376,11 +376,11 @@ class Node(
             isPerformingAlgorithm = false
             requestingCS = false
             tokenDeferred = null
-            if (Network.requestQueue.isNotEmpty()) {
+            if (Network.requestQueue.isNotEmpty())
                 sendToken(Network.requestQueue.poll())
-            } else {
+            else
                 sendToken(getNextNodeId())
-            }
+
         }
     }
 
