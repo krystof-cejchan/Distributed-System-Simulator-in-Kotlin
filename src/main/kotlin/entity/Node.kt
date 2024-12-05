@@ -130,7 +130,7 @@ class Node(
         electionProcessJob?.cancel()
         electionProcessJob = coroutineScope.launch {
             // Čekáme na určitou dobu, než volby selžou
-            delay((MAX_ELECTION_TIMEOUT + MAX_ELECTION_TIMEOUT * .2).toLong())
+            delay(random.nextLong(MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT))
             if (state == NodeState.CANDIDATE) {
                 // Pokud jsme stále kandidátem, znamená to, že volební proces selhal
                 logCt("Uzel $id volby selhaly v termínu $currentTerm, opětovné zahájení voleb")
@@ -159,7 +159,7 @@ class Node(
     private fun handleBasicMessage(message: Message) {
         when (message.type) {
             MessageType.REQUEST -> {
-                logCt("Uzel $id obdržel REQUEST od ${message.senderId}: ${message.content}")
+                println("Uzel $id obdržel REQUEST od ${message.senderId}: ${message.content}")
                 // Odpověď pouze na REQUEST typu
                 if (message.type != MessageType.RESPONSE) {
                     coroutineScope.launch {
@@ -217,7 +217,6 @@ class Node(
                 becomeLeader()
             }
         } else if (message.term > currentTerm) {
-            // Pokud obdržíme vyšší termín, přejdeme do stavu FOLLOWER
             currentTerm = message.term
             state = NodeState.FOLLOWER
             votedFor = null
@@ -241,7 +240,6 @@ class Node(
             heartbeatJob?.cancel()
             logCt("Uzel $id se stává FOLLOWER v termínu $currentTerm po obdržení HeartBeatu od ${message.senderId}")
         } else {
-            // Pokud jsme kandidát a obdržíme heartbeat s naším termínem, přejdeme do stavu FOLLOWER
             if (state == NodeState.CANDIDATE) {
                 state = NodeState.FOLLOWER
                 votedFor = null
@@ -256,13 +254,10 @@ class Node(
         if (state == NodeState.CANDIDATE) {
             state = NodeState.LEADER
             logCt("Uzel $id se stal LEADER v termínu $currentTerm")
-            // Zrušit election timeout, protože již není potřeba
             electionTimeoutJob?.cancel()
-            // Zrušit volbový proces, pokud je aktivní
             electionProcessJob?.cancel()
-            // Zrušit předchozí heartbeat job, pokud existuje
             heartbeatJob?.cancel()
-            // Start sending heartbeats
+            // posílá heartbeat, aby se udržel leaderem
             heartbeatJob = sendHeartbeats()
         }
     }
@@ -359,7 +354,6 @@ class Node(
         return allIds[nextIndex]
     }
 
-    // Metoda pro vlastní algoritmus, kterou může uzel periodicky vykonávat
     fun performAlgorithms() {
         isPerformingAlgorithm = true
         coroutineScope.launch {
@@ -392,7 +386,7 @@ class Node(
         }.toList()
 
     override fun toString(): String {
-        return "Node(id='$id', isActive=$isActive, state=$state, term=$currentTerm, hasToken=$hasToken)"
+        return "Node(id='$id', state=$state, term=$currentTerm, hasToken=$hasToken)"
     }
 
     override fun equals(other: Any?): Boolean {

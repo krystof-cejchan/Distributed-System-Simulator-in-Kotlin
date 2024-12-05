@@ -12,7 +12,6 @@ object CommandManager {
         commands.add(Log())
         commands.add(Message())
         commands.add(PrintInfo())
-        commands.add(StopNode())
         commands.add(Exit())
     }
 

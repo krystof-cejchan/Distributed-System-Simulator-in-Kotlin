@@ -1,7 +1,9 @@
 package cz.krystofcejchan.entity
 
 import cz.krystofcejchan.utils.logCt
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -16,11 +18,11 @@ private val max = (2.0.pow(k.toDouble()) - 1).toInt()
  */
 object Network {
     private var head: Node? = null
-    internal val nodes = HashMap<String, Node>()
+    internal val nodes = ConcurrentHashMap<String, Node>()
 
     // Fronta žádostí o token
-    internal val requestQueue: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
-
+    internal val requestQueue: Queue<String> = LinkedList()
+    private val rwLock = ReentrantReadWriteLock()
 
     private fun isInLegalRange(hashValue: Int) = hashValue in min..max
 
@@ -48,30 +50,34 @@ object Network {
      * chord lookup
      */
     fun chordLookup(node: Node): Node? {
-        if (nodes.isEmpty()) return null
-        val visited = mutableSetOf<Node>()
-        val head = this.head
-        if (node.hash <= head!!.hash || node.hash > head.previous!!.hash) {
-            return if (node.id == head.id) head else null
-        }
-        fun recursiveLookup(currNode: Node): Node? {
-            visited.add(currNode)
-            if (node.hash <= currNode.hash) {
-                return if (node.id == currNode.id) currNode else null
+        rwLock.readLock().lock()
+        try {
+            if (nodes.isEmpty()) return null
+            val visited = mutableSetOf<Node>()
+            val head = this.head
+            if (node.hash <= head!!.hash || node.hash > head.previous!!.hash) {
+                return if (node.id == head.id) head else null
             }
-            val firstFromCurrFingerTable = currNode.fingerTable.first()
-            if (node.hash <= firstFromCurrFingerTable.hash) {
-                return if (node.id == firstFromCurrFingerTable.id) firstFromCurrFingerTable else null
-            }
-            val nextNode = getNextNodeFromFingerTable(currNode, node.hash)
-            if (nextNode in visited) {
-                return if (node.id == nextNode!!.id) nextNode else null
-            }
-            return recursiveLookup(nextNode!!)
 
+            fun recursiveLookup(currNode: Node): Node? {
+                visited.add(currNode)
+                if (node.hash <= currNode.hash) {
+                    return if (node.id == currNode.id) currNode else null
+                }
+                val firstFromCurrFingerTable = currNode.fingerTable.firstOrNull()
+                if (firstFromCurrFingerTable != null && node.hash <= firstFromCurrFingerTable.hash) {
+                    return if (node.id == firstFromCurrFingerTable.id) firstFromCurrFingerTable else null
+                }
+                val nextNode = getNextNodeFromFingerTable(currNode, node.hash)
+                if (nextNode in visited) {
+                    return if (node.id == nextNode!!.id) nextNode else null
+                }
+                return recursiveLookup(nextNode!!)
+            }
+            return recursiveLookup(head)
+        } finally {
+            rwLock.readLock().unlock()
         }
-
-        return recursiveLookup(head)
     }
 
     fun buildFingerTables() {
@@ -89,68 +95,75 @@ object Network {
             .filter { it.hash <= hashValue }
             .minByOrNull { abs(hashValue - it.hash) }
 
-
-    // Registrace uzlu do sítě
+    // Adding a node to the network
     fun addNode(node: Node) {
-        if (!isInLegalRange(node.hash)) return
-        if (head == null) {
-            node.previous = node
-            node.next = node
-            head = node
-        } else {
-            val temp = lookup(node.hash)
-            node.next = temp
-            node.previous = temp!!.previous
-            node.previous!!.next = node
-            node.next!!.previous = node
-
-            if (node.hash < head!!.hash)
+        rwLock.writeLock().lock()
+        try {
+            if (!isInLegalRange(node.hash)) return
+            if (head == null) {
+                node.previous = node
+                node.next = node
                 head = node
-        }
-        buildFingerTables()
-        nodes.putIfAbsent(node.id, node).also { node.start() }
-    }
+            } else {
+                val temp = lookup(node.hash)
+                node.next = temp
+                node.previous = temp!!.previous
+                node.previous!!.next = node
+                node.next!!.previous = node
 
-    fun removeNode(node: Node) {
-        val temp = lookup(node.hash)
-        if (nodes.size == 1) {
-            head = null
-            return
-        }
-        if (temp != null && temp.hash == node.hash) {
-            temp.previous!!.next = temp.next
-            temp.next!!.previous = temp.previous
-            if (head!!.hash == node.hash) {
-                head = temp.next
+                if (node.hash < head!!.hash)
+                    head = node
             }
+            nodes.putIfAbsent(node.id, node)
+            buildFingerTables()
+            node.start()
+        } finally {
+            rwLock.writeLock().unlock()
         }
-        nodes.getOrElse(node.id) { node }.let {
-            nodes.remove(it.id)
-            it.stop()
-        }
-        buildFingerTables()
     }
 
-    // Vytvoření propojení mezi uzly
+    // Removing a node from the network
+    fun removeNode(node: Node) {
+        rwLock.writeLock().lock()
+        try {
+            val temp = lookup(node.hash)
+            if (nodes.size == 1) {
+                head = null
+                return
+            }
+            if (temp != null && temp.hash == node.hash) {
+                temp.previous!!.next = temp.next
+                temp.next!!.previous = temp.previous
+                if (head!!.hash == node.hash) {
+                    head = temp.next
+                }
+            }
+            nodes.getOrElse(node.id) { node }.let {
+                nodes.remove(it.id)
+                it.stop()
+            }
+            buildFingerTables()
+        } finally {
+            rwLock.writeLock().unlock()
+        }
+    }
+
+    // Connecting two nodes
     fun connect(nodeId1: String, nodeId2: String) {
         if (nodes.containsKey(nodeId1) && nodes.containsKey(nodeId2)) {
-            logCt("Propojeno $nodeId1 <-> $nodeId2")
-        } else {
-            logCt("Propojení selhalo: Jeden z uzlů neexistuje.")
+            logCt("$nodeId1 <-> $nodeId2")
         }
     }
 
-    // Odeslání zprávy prostřednictvím sítě
+    // Sending a message through the network
     suspend fun sendMessage(message: Message) {
         val receiver = chordLookup(Node(message.receiverId))
-        receiver?.receiveMessage(message) ?: logCt("Zpráva pro neexistující uzel: ${message.receiverId}")
+        receiver?.receiveMessage(message) ?: logCt("Zpráva pro neexistující uzel ${message.receiverId}")
     }
 
     fun stopAllNodes() = this.nodes.values.forEach { it.stop() }
 
     override fun toString(): String {
-        return "Network(nodes=$nodes)"
+        return nodes.values.joinToString("\n") { node -> node.toString() }
     }
-
-
 }
